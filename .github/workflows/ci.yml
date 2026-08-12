@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# No secrets are used, and none are needed. values.local.env is gitignored and
+# must never reach a runner — see ci/check.sh for what that means for what CI
+# can and cannot check.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Both steps go through the Makefile so there is exactly one definition of
+      # what gets linted and what gets checked. Inlining the commands here is how
+      # local and CI quietly drift apart.
+      #
+      # shellcheck is pre-installed on the runner (0.9.0 on ubuntu-24.04). That is
+      # older than a typical local install, so local may be stricter — which is the
+      # safe direction.
+      - name: lint
+        run: make lint
+
+      - name: structural and shape checks
+        run: make check

@@ -1,0 +1,6 @@
+# Real values for the placeholders in collections/ — never commit.
+values.local.env
+values.*.local.env
+
+# Plans and working context — local only, per this repo's own convention.
+context/
