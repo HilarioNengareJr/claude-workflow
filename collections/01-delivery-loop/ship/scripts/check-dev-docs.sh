@@ -1,7 +1,7 @@
 #!/bin/bash
 # check-dev-docs.sh — block dev-work docs from being committed on ANY platform.
 #
-# Rule (2026-07-22): contracts and markdown written for dev work never
+# Rule (Hilario, 2026-07-22): contracts and markdown written for dev work never
 # get committed — not to GitLab, not to GitHub. They live on disk only.
 #
 # Usage:

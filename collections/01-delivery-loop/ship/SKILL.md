@@ -1,362 +1,243 @@
 ---
 name: ship
-description: >
-  Full git + GitLab workflow for the {{REPO_PREFIX}} repos ({{ADMIN_REPO}},
-  {{WEB_REPO}}, {{SERVICE_REPO}}) on GitLab at {{GITLAB_HOST}}. Use whenever
-  the task involves git: cloning, setting up remotes/SSH, staging, committing,
-  writing commit messages, amending, and pushing straight to `main` (the user is
-  the sole maintainer — no feature branches, no merge requests, no pre-merge
-  review gate). Also use to query GitLab directly via the gitlab MCP server:
-  a one-shot pipeline status read on a commit, deploy/environment status, and
-  todos across all three repos ("is it deployed", "my gitlab todos", "what's the
-  status of that commit"). NOT for watching a pipeline that is still running or
-  diagnosing why one failed — "did the pipeline pass", "watch CI", "why did it
-  fail", and anything needing job logs belong to /watch, which polls to
-  completion and fetches traces this skill cannot.
-  Because there's no MR review gate, this skill uses beads (`bd`) as the
-  quality-and-traceability net — track the work, close it on ship, and log any
-  quality debt as beads so nothing is lost the moment code hits `main`.
+description: >-
+  Ship a change to any {{COMPANY}} {{PRODUCT}} repo on {{COMPANY}}'s GitLab (the {{GITLAB_GROUP}} group on
+  {{GITLAB_HOST}}): run the pre commit checks, commit with a conventional
+  message, pull, push straight to main, then follow the pipeline to the end
+  and report whether staging deployed and whether the manual prod job is waiting.
+  Also answers GitLab status questions on those repos through the gitlab MCP.
+  Use whenever the user wants work out the door or wants to know where it
+  landed: "ship it", "push it", "push this up", "commit and push", "send it
+  to GitLab", "get this onto main", "deploy to staging", "is it deployed", "did
+  the pipeline pass", "watch the pipeline", "watch CI", "why did the pipeline
+  fail", "is prod clicked", "what's on main", or typing /ship. Covers all
+  eight {{REPO_PREFIX}} and {{CAMPAIGNS_REPO}} repos under {{WORKSPACE_ROOT}}. NOT for the the client app
+  app checkout (its push remote is disabled on purpose), NOT for GitHub
+  repos, and NOT for release notes or PR prose (that is /ultron-document).
 ---
 
-# Git workflow ({{REPO_PREFIX}} repos)
+# Ship
 
-This skill encodes how to work with git on the {{REPO_PREFIX}} repos. The remote is
-GitLab at `{{GITLAB_HOST}}`, the group is `{{GITLAB_GROUP}}`, and **the user is the sole
-maintainer of all three repos.** It's a one-person repo: work goes **straight
-onto `main`**. No branches, no merge requests, no review gate. Keep history clean
-and never rewrite or clobber what's already pushed.
+Take a change from "done on my machine" to "on main, pipeline green, staging
+deployed" in one pass, on any {{COMPANY}} {{PRODUCT}} repo. The user is the sole maintainer
+of every repo in the `{{GITLAB_GROUP}}` group, so work goes straight onto `main`. There
+are no feature branches and no merge requests unless the user asks for one.
 
-## Current working mode (read before doing anything)
+A shipment has four stages. Do them in order and do not skip the last one:
+pushed is not deployed.
 
-**Commit and push directly to `main`.** The per-feature-branch + MR flow is
-retired — there's no second maintainer and nobody reviews the MRs, so the
-ceremony bought nothing.
-
-- Work **on `main`**. Keep it current before committing:
-  `git checkout main && git pull --ff-only`. Confirm with
-  `git branch --show-current`.
-- Commit in **small, logical units** with conventional-commit messages (see
-  below). One commit = one change, so `git log` stays readable.
-- **Push straight to `main`:** `git push origin main`. That's the whole ship
-  step. On these repos a push to `main` auto-deploys **staging**; **prod is a
-  separate manual gate** the user clicks. CI runs on `main` after the push.
-- Push when the work is ready to ship. There's no pre-merge gate to wait on and
-  nothing to stage behind an MR.
-
-- **Run the repo's QA gate before you push, and track the work in beads.** With
-  no MR, these two are what keep shipping honest — see the next two sections.
-
-If the user explicitly asks for a branch or MR on a specific change, the
-machinery is in "Optional: branch + MR on request" below — but that's on request
-only, not the default.
-
-## Pre-push QA gate (what the repo already enforces)
-
-CI does **not** check code correctness. The shared pipeline
-(`catalyst/pipeline-templates`) only runs build + security + deploy jobs —
-`docker-lint`, `gitleaks`, helm checks, docker build, then `{{STAGING_JOB}}`/`prod` (and web
-even sets `test_enabled: false`). There are no git hooks either. So the real
-quality gate the previous maintainers enforced was **local commands run by hand
-before shipping.** Run them before every push to `main` — they are the gate now.
-
-- **{{SERVICE_REPO}}** (Makefile):
-  - Minimum: `make check-quick` (gofmt + go vet + unit tests).
-  - Fuller: `make test` (`go test -race ./...`), `make lint` (golangci-lint,
-    `.golangci.yml`), `make test-contract` (validates against `api/openapi.yaml`),
-    `make coverage` (enforces 90% per file / 95% overall via
-    `scripts/check-coverage.sh`).
-- **{{WEB_REPO}}** (npm): `npm run build` (`tsc -b && vite build`) + `npm run
-  lint` (`eslint . --max-warnings 0` — **zero-warning**; the trackers hold a known
-  baseline, so treat *new* warnings as failures) + `npm run test` (vitest). Run
-  `npm run test:e2e` (playwright) for funnel/checkout changes.
-- **{{ADMIN_REPO}}** (npm): `npm run build` (`tsc -b && vite build`) + `npm run
-  lint` (`eslint .`). **No test framework exists** — so verify by driving the UI
-  (see the `verify` skill). This is the weakest-gated repo; lean hardest on manual
-  verification and beads here.
-
-A red gate means don't push. If you deliberately ship with a known gap (a skipped
-test, a deferred lint), that gap goes in beads — see below.
-
-## Track work in beads (the traceability net)
-
-Beads (`bd`) is a git-native issue tracker living in `.beads/issues.jsonl`, synced
-with the code. With no MR and no reviewer, beads is the audit trail of what
-shipped and the place quality debt goes so it isn't lost the second code lands on
-`main`.
-
-**Where it's set up:** `{{ADMIN_REPO}}` only (issue IDs like `{{ADMIN_REPO}}-1fp`).
-`{{WEB_REPO}}` and `{{SERVICE_REPO}}` have no `.beads/` yet — use beads there
-only after `bd init`, and only if the user asks; don't init a repo unprompted.
-
-**The loop, per change:**
-
-1. **Starting** — make sure a bead exists for the work. `bd ready` shows open,
-   unblocked work; `bd list` shows everything. New work: `bd create "<what>"`
-   (or `bd q "<what>"` for just an ID). Mark it active:
-   `bd update <id> --status in_progress`.
-2. **Before you push** —
-   - Close what's done: `bd close <id>` (or `bd update <id> --status done`).
-   - **Log every known gap as its own bead** — a skipped edge case, a follow-up, a
-     `TODO` left in code, a test/lint deferred: `bd create "<gap>" -p <priority>`.
-     Anything that would once have surfaced in review lands in beads instead of
-     vanishing.
-   - Reference the bead ID in the commit message so commit ↔ issue tie together,
-     e.g. `feat: collapsible top {{ITEM}} ({{ADMIN_REPO}}-1fp)`.
-3. **Sync** — `bd sync` commits the `.beads/issues.jsonl` change so tracking
-   travels with the code. Run it as part of shipping, not after.
-
-**Before calling a change shipped:** `bd status` should reflect reality — the
-shipped bead closed, any debt logged. A green QA gate plus a clean `bd status` is
-the new "MR approved."
-
-> **Protected-branch note.** If a push to `main` is rejected with `You are not
-> allowed to push code to protected branches`, `main` is protected server-side.
-> The user can loosen it in **Settings → Repository → Protected branches** (allow
-> the maintainer to push). Surface it and let them decide — don't try to force it.
-
-## Golden rules (read first)
-
-1. **Never force-push `main`.** It's the working branch *and* the shared history
-   — a force-push can destroy commits for good. Plain `git push` only.
-2. **Never bare `--force`.** If you ever force-push anything at all, it's
-   `--force-with-lease`, and never on `main`.
-3. **One commit = one logical change.** Don't mix a CI fix and a feature in one
-   commit — `git log` is the audit trail.
-4. **Non-fast-forward push? Pull, don't force.** If `git push origin main` is
-   rejected as non-fast-forward, another machine pushed first:
-   `git pull --rebase origin main`, then push. Never resolve it with `--force`.
-5. **When unsure, do the safe boring thing**: `git pull --ff-only`, small
-   `git commit`, plain `git push`.
-
-## Remotes & SSH (git protocol over HTTPS)
-
-HTTPS clones prompt for credentials and trip 2FA. SSH uses a key pair instead.
-
-Check what protocol a repo uses:
-```bash
-git remote -v
 ```
-If the URL starts with `https://`, it's HTTPS. Switch it to SSH:
-```bash
-git remote set-url origin git@{{GITLAB_HOST}}:{{GITLAB_GROUP}}/<repo>.git
-```
-(`<repo>` is e.g. `{{ADMIN_REPO}}`. The group is `{{GITLAB_GROUP}}`.)
-
-One-time SSH key setup:
-```bash
-ls -al ~/.ssh                       # look for id_ed25519(.pub)
-ssh-keygen -t ed25519 -C "work-email"   # only if no key exists
-cat ~/.ssh/id_ed25519.pub           # copy this into GitLab > Preferences > SSH Keys
-ssh -T git@{{GITLAB_HOST}}         # test; type "yes" to confirm fingerprint
-```
-After SSH works, the old `~/.git-credentials` file (stored HTTPS login) can be
-removed so nothing's left lying around.
-
-## Working on main
-
-Stay on `main` and keep it current before every commit so you never diverge:
-```bash
-git checkout main            # be on main
-git pull --ff-only           # fast-forward to origin/main; fails loudly if diverged
-git branch --show-current    # explicit confirm: should print "main"
-```
-If `pull --ff-only` fails, local `main` has commits origin doesn't (or vice
-versa) — reconcile with `git pull --rebase origin main` before doing more work.
-
-## Staging & inspecting before commit
-
-Never commit blind. Always look first:
-```bash
-git status              # what's modified / staged / untracked
-git diff                # unstaged changes
-git diff --staged       # what's actually going into the commit
-git log -1 --stat       # the last commit's message + files (before amending!)
-```
-Stage deliberately — prefer naming files over `git add .` when several unrelated
-changes are present, so concerns stay in separate commits:
-```bash
-git add Dockerfile
-git add path/to/specific/file
+check  →  commit  →  push  →  follow the pipeline
 ```
 
-## Dev-work docs never ship — check every time
+Read `references/repos.md` for the per repo table: which repos have CI, which
+QA command to run first, which hook guards the commit, and where the deploy
+lands. Read it before the check stage so you run the right gate.
 
-**Rule (2026-07-22): contracts and markdown written for dev work are never
-committed, on any platform.** Not GitLab, not GitHub. They live on disk only.
+## Stage 1: check
 
-This covers `context/`, `context-v1/`, `CLAUDE.md`, `HANDOVER.md`, `FINDS*.md`,
-`memory.md`, root `docs/*.md`, `.claude/`, `*_FRONTEND_CONTRACT.md`, and
-`*_SPEC.md`. It does **not** cover `README.md`, `.beads/`, or the
-knowledgebase's `system_prompt.md` and `files/` — those are product, not dev work.
+1. **Find the repo and confirm you are on `main`.**
+   ```bash
+   git rev-parse --show-toplevel
+   git branch --show-current
+   git status --short
+   ```
+   Refuse to ship from a client app checkout. Its `origin` is literally
+   `DISABLED_never_push`, and that is by design (client source, local only).
+   Say so and stop.
 
-**Run this after staging and before every commit:**
+2. **Look at what is going out.** Never commit blind.
+   ```bash
+   git diff --staged --stat
+   git diff --staged
+   ```
+   If the staged set mixes two unrelated changes, split it into two commits so
+   `git log` stays an honest audit trail.
+
+3. **Run the repo's QA gate** from `references/repos.md`. CI on these repos does
+   not test correctness. The shared pipeline builds, scans and deploys, and
+   web even sets `test_enabled: false`. The local gate is the only gate. A red
+   gate means do not push; say what failed and stop.
+
+4. **Run the dev docs check.** Rule since 2026-07-22: markdown written for dev
+   work (`context/`, `CLAUDE.md`, `HANDOVER.md`, root `docs/*.md`, `.claude/`,
+   `*_SPEC.md`, `memory.md`) never gets committed, on any platform.
+   ```bash
+   ~/.claude/bin/check-dev-docs.sh
+   ```
+   Exit 0 is clean. Exit 1 lists the files to `git restore --staged`. A repo
+   can keep a path by listing it in a committed `.devdocs-keep` (service keeps
+   `docs/specs/`, admin keeps `.claude/`). Every repo's `pre-commit` hook runs
+   the same script, but hooks are local to a clone, so run it yourself.
+
+5. **On `{{COVERS_REPO}}`, gitleaks is the hook.** It scans the staged
+   files with the repo's own `.gitleaks.toml`. Run it before committing so a
+   blocked commit is never a surprise:
+   ```bash
+   gitleaks git --config .gitleaks.toml --staged --no-banner .
+   ```
+   No real key may ever enter that repo. The only PEM allowed is the throwaway
+   test key under `codes/samples/`.
+
+## Stage 2: commit
+
+Conventional commit style, imperative, summary under about 50 characters,
+body explains the why when the diff does not:
+
+```
+<type>: <what changed>
+
+<why, wrapped at 72 columns>
+```
+
+Types: `feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `ci`, `revert`.
+Real examples from these repos:
+
+- `fix: bump pinned ca-certificates to 20260909-r0`
+- `feat: clear button on the assistant panel, FAB breathe, scroll-to-top ({{ADMIN_REPO}}-8qp6)`
+- `docs(specs): bring the collection specs in from the app repo`
+
+Never add `Co-Authored-By` or "Generated with" trailers.
+
+**Beads on service and admin.** Those two repos track work with `bd`. Put the
+bead id in the commit summary, close the bead before you push (`bd close
+<id>`), log any gap you knowingly ship as a new bead (`bd create "<gap>"`),
+and run `bd sync` so the `.beads` export travels with the code. With no
+reviewer, a clean `bd status` plus a green gate is the approval.
+
+**Amend only while local.** Before the push, `git commit --amend` and squashing
+are fine. After the push, never rewrite. Fix forward with a new commit or
+`git revert`.
+
+## Stage 3: push
+
+Run the push as **its own command**, on its own line, not chained after the
+commit with `&&`. The harness's permission check reads the whole command, and a
+commit bundled with a push has been refused as "data exfiltration" where a
+plain `git push origin main` is allowed. One command, one job.
 
 ```bash
-~/.claude/skills/ship/scripts/check-dev-docs.sh
+git pull --ff-only origin main
+```
+```bash
+git push origin main
 ```
 
-Exit 0 is clean. Exit 1 lists what to unstage. A `pre-commit` hook in each {{PRODUCT}}
-repo runs the same script, so a hand-typed `git commit` is covered too — but
-run it yourself rather than relying on the hook, because the hook is local to a
-clone and vanishes if the repo is re-cloned.
+- Rejected as non fast forward: `git pull --rebase origin main`, then push
+  again. Never `--force` on `main`, with or without lease.
+- Rejected as a protected branch: `main` is protected server side. Surface it;
+  the user loosens it under Settings, Repository, Protected branches, or asks
+  for a branch and MR (see the end of this file). Do not work around it.
+- If the harness refuses the push, do not retry in pieces or through another
+  tool. Report the exact command for the user to run and finish the rest.
 
-To audit what is *already* tracked in a repo (useful after cloning or when the
-rule changes):
+Confirm the push landed:
+```bash
+git status -sb
+```
+It must read `## main...origin/main` with no `[ahead N]`.
+
+## Stage 4: follow the pipeline
+
+Repos with `.gitlab-ci.yml` (web, service, admin, {{CAMPAIGNS_REPO}}) run the
+shared pipeline template on every push to `main`: pre flight, lint, audits
+(gitleaks, Polaris), build, then `{{STAGING_JOB}}` deploys on its own and `prod` waits for
+a manual click. A shipment is not done until you have read that pipeline.
+
+Run the watcher in the background from inside the repo. It polls until the
+pipeline reaches a final state, lists every job, and pulls the failing jobs'
+logs, which the gitlab MCP cannot fetch.
 
 ```bash
-~/.claude/skills/ship/scripts/check-dev-docs.sh --tracked
+~/.claude/skills/ship/scripts/watch-pipeline.sh            # latest pipeline on this branch
+~/.claude/skills/ship/scripts/watch-pipeline.sh <sha>      # a specific commit
+~/.claude/skills/ship/scripts/watch-pipeline.sh <id>       # a pipeline id
 ```
 
-Purge anything it finds with `git rm --cached <file>` — that unstages it from
-the repo while leaving it on disk.
+Use `run_in_background: true`; the harness wakes you when it exits. A fresh
+push takes 30 to 60 seconds to register a pipeline. If the script finds none,
+wait and re run rather than reporting "no pipeline". Knobs: `POLL_SECONDS`
+(default 45), `MAX_POLLS` (default 120), `SCAN_ALL=1` to scan passing jobs too.
 
-**Why the check allows deletions:** it filters on `--diff-filter=ACMR`, so
-removing a dev doc from tracking passes. Purging is the fix, not a violation.
+The watcher reads the user's personal access token from the gitlab MCP entry
+in `~/.claude.json`, which sees every repo in the group. Do not switch it to
+`glab`; `glab`'s stored token for `{{GITLAB_HOST}}` is rejected (401) and a
+project token would only see one repo anyway.
 
-### Per-repo exemptions — `.devdocs-keep`
+**Judge the result:**
 
-A repo can keep something the rule would otherwise block by committing a
-`.devdocs-keep` file at its root, listing path prefixes one per line
-(`#` comments and blank lines ignored).
+- A failed job **without** `allow_failure` is a blocking failure. The pipeline
+  stopped at that stage and nothing after it ran. staging did not deploy.
+- `gitleaks` and `helm-templates-check` run with `allow_failure` on these
+  repos. Red there does not block the deploy, but read the leak report; a
+  real leak matters even when CI shrugs.
+- `manual` as the final state means every required job passed and only the
+  prod gate remains. That is the normal good ending.
 
-It is committed on purpose, so the exemption survives a re-clone — unlike a
-git hook or a git config value, which are local to one clone.
+A blocking failure is already on `main`. Fix forward with a new commit, never
+a rewrite. Read the actual error line from the log before changing anything.
+Common ones: `DL3018` from hadolint means pin the apk package version to one
+that exists; `npm ERR!` or `error TS` means the local gate was skipped.
 
-**`{{ADMIN_REPO}}` exempts `.claude/`** because its agents and the
-`react-best-practices` skill (40-plus rule files) are shared tooling that
-anyone cloning that repo needs. The exemption is scoped to that prefix only —
-`CLAUDE.md` and `docs/*.md` are still blocked there, and `.claude/` is still
-blocked in every other repo.
+**Repos without CI** (qr-covers, knowledgebase, finance-dashboard,
+operator-assistant): the shipment ends at the confirmed push. Say so plainly
+rather than implying a deploy happened.
 
-Keep exemptions narrow. Each one is a path where a dev doc can reach a remote.
+## Status questions without a push
 
-**One trap to know about:** the directory rules are anchored to the repo root
-on purpose. An early version matched `*/context/*` and flagged
-`{{WEB_REPO}}/src/context/*.tsx` — the React context providers, i.e. real
-application source. Never widen those patterns.
+Use the gitlab MCP for quick reads. Address a repo by its URL encoded path as
+`project_id`, for example `{{GITLAB_GROUP}}/{{SERVICE_REPO}}`.
 
-## Commit messages
+- Did my push pass? `list_commit_statuses` with the sha, or `ref: "main"`.
+- What is on main? `list_commits` with `ref_name: "main"`.
+- Is it live? The `{{STAGING_JOB}}` and `prod` job states in `list_commit_statuses`; the
+  prod job sitting at `manual` means pushed, not live. Only the user clicks it.
+- My queue: `list_todos`, `my_issues`.
 
-Conventional-commits style (the {{PRODUCT}} repos lean on this):
+For the failing job's log, the MCP cannot help; run the watcher with the
+pipeline id, it returns at once when the pipeline is already finished.
 
-```
-<type>: <imperative summary under ~50 chars>
+## Branch and merge request, on request only
 
-<optional body explaining the why, wrapped ~72 cols>
-```
-Types: `feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `ci`.
-
-Examples from real work:
-- `fix: pin tzdata to 2026b-r0 to satisfy docker-lint and build`
-- `feat: implement voucher UI for bulk notification campaign`
-
-Two `-m` flags = summary + body:
-```bash
-git commit -m "feat: implement voucher UI for bulk notification campaign" \
-           -m "Wire the four-field voucher block in the campaign builder form to the bulk notification endpoint."
-```
-
-### Dropping the Claude Code trailer
-To stop Claude Code adding `Co-Authored-By: Claude` / "Generated with" lines,
-set in `~/.claude/settings.json` (or repo-level `.claude/settings.json`):
-```json
-{ "includeCoAuthoredBy": false }
-```
-`git commit --amend -m "..."` also drops an existing trailer because it replaces
-the whole message.
-
-## Amending & rewriting — only before the push
-
-Rewriting history is fine while a commit is **local only**. Once it's pushed to
-`main` it's shared history — rewriting it needs a force-push, which rule 1 forbids
-on `main`. So:
-
-- **Not yet pushed:** amend or squash freely, then push.
-  ```bash
-  git commit --amend -m "new message"              # fix the message
-  git add <file> && git commit --amend --no-edit   # fold a fix into the last commit
-  git rebase -i HEAD~<n>                            # squash several local commits into one
-  ```
-- **Already pushed to `main`:** do **not** amend or rebase it. Make a **new
-  commit** on top (`git commit` a follow-up, or `git revert <sha>` to undo). A
-  clean forward commit beats rewriting shared history.
-
-## Pushing
+If the user asks to stage something risky behind an MR, or `main` rejects the
+push as protected:
 
 ```bash
-git pull --ff-only origin main   # make sure you're current first
-git push origin main             # ship it — auto-deploys staging
+git checkout -b fix/<what> main
+git push -u origin fix/<what>
 ```
-- Plain `git push` only. **Never** `git push --force` or `--force-with-lease` on
-  `main`.
-- Rejected as non-fast-forward? `git pull --rebase origin main`, then push again
-  (golden rule 4).
 
-## Querying GitLab directly (gitlab MCP)
+Then `create_merge_request` through the gitlab MCP with `target_branch:
+"main"`, a conventional title, and a description of what changed and how it
+was verified. No reviewers; the user merges their own.
 
-The `gitlab` MCP server is wired to `{{GITLAB_HOST}}` with a personal token, so
-you can read GitLab state without leaving the session. **Prefer the MCP for
-status questions** — it's faster and quotable than "go check the pipeline".
+## Report
 
-Address a repo by its URL-encoded path as `project_id`:
-`{{GITLAB_GROUP}}/{{SERVICE_REPO}}`, `{{GITLAB_GROUP}}/{{WEB_REPO}}`, `{{GITLAB_GROUP}}/{{ADMIN_REPO}}`. The token
-covers all three.
+Lead with the verdict, then only what the user must act on.
 
-What to reach for (commit-centric, since there are no MRs):
-- **Did my push pass CI?** — `list_commit_statuses` (`sha` = the commit you
-  pushed, or `ref: "main"`). Pass/fail/running per job, including the `{{STAGING_JOB}}`
-  deploy job and the manual `prod` job.
-- **What's the latest on main?** — `list_commits` (`ref_name: "main"`).
-- **Is it deployed?** — the `{{STAGING_JOB}}`/`prod` job status in `list_commit_statuses`,
-  then confirm **Deploy > Environments** in the browser for what's actually live.
-- **Your queue** — `list_todos`, `my_issues`.
-
-**The one gap:** the MCP can tell you *which* pipeline or job failed, but it can't
-fetch the job's log/trace. For the actual error text, use the CLI (`glab ci view`,
-`glab ci trace`) or open the failing job in the browser. See "Reading a failed
-pipeline" below.
-
-## Pushed ≠ live
-
-Pushing puts code on `main` and auto-deploys **staging**; **prod is a separate manual
-gate.** After a push, check the commit's pipeline (`list_commit_statuses` via MCP)
-for a green `{{STAGING_JOB}}` deploy, then confirm **Deploy > Environments** in the browser
-for what's actually running. To go live on prod, the user clicks the `when:
-manual` prod job — you don't trigger it.
-
-## Optional: branch + MR on request
-
-The default is direct-to-`main`. Only if the user explicitly asks for a branch or
-a merge request on a specific change (e.g. to stage something risky, or to dodge a
-protected-`main` push rejection):
-```bash
-git checkout -b fix/<what-it-fixes> main    # branch off current main
-# ... commit ...
-git push -u origin fix/<what-it-fixes>
 ```
-Then create the MR via the gitlab MCP `create_merge_request` (`source_branch`,
-`target_branch: "main"`, conventional-style title, description = what changed +
-how it was verified). Don't assign reviewers — the user merges their own. Use
-this only when asked; it is not the default flow.
+Shipped <sha> to <repo> main: <summary line>
+Pipeline <id>: PASS | FAILED at <job> | non blocking red on <job>
+<pipeline web_url>
+Staging: deployed | not reached      Prod: waiting for your click | n/a
+Next: <nothing | the fix forward | the command you need to run yourself>
+```
 
-## Reading a failed pipeline (quick map)
+## Examples
 
-Use the MCP to find *which* stage/job failed (`list_commit_statuses` on the commit
-or `ref: "main"`), then read its log via `glab ci view` / `glab ci trace` or the
-browser — the MCP doesn't expose job traces.
+**"ship it"** in `{{COVERS_REPO}}` with a staged docs change.
+Check: on `main`, diff is nine spec files plus a README line, no QA gate for
+docs, dev docs check passes (`docs/specs/` is a folder, the rule covers root
+`docs/*.md` only), gitleaks clean. Commit `docs(specs): ...`. Push as its own
+command. Confirm `## main...origin/main`. No CI on this repo, so report:
+"Shipped b37e72e to {{COVERS_REPO}} main. No pipeline on this repo; the
+push is the whole shipment."
 
-Stage order in {{PRODUCT}}-admin: `version → pre-flight → lint → audits → build`.
-A pipeline stops at the first failing stage, so a `lint` failure means `build`
-never ran. Common jobs:
-- `docker-lint` (hadolint) — Dockerfile best-practice rules, e.g. **DL3018**
-  "pin versions in apk add". Pin to a version that *exists* to satisfy both lint
-  and build (`apk add tzdata=2026b-r0`, not bare `tzdata` and not a stale pin).
-- `gitleaks` — scans the diff for committed secrets; often a false positive on
-  test fixtures, but always verify. (Runs `allow_failure` on some repos —
-  non-blocking, but read it.)
-- `helm-templates-check` — renders the Helm/K8s chart; failure can mean the
-  deploy step can't produce valid manifests.
+**"did the pipeline pass?"** in `{{ADMIN_REPO}}` after a push.
+Run the watcher on the current branch. It returns immediately because the
+pipeline finished: "Pipeline 161802: PASS. {{STAGING_JOB}} deployed, prod waiting for your
+click. gitleaks red but allow_failure, one hit on a test fixture, not a leak."
 
-CI runs on `main` after the push, so a failed job is already on the shared branch
-— fix forward with a new commit, never a rewrite. Open the failing job's log and
-read the actual error/rule code before changing anything — guess less, read more.
+**"push this to service"** with `make check-quick` failing.
+Stop at stage 1: "gofmt flagged internal/admin/orders.go; not pushing. Fix the
+formatting and I'll ship." Do not commit around a red gate.
