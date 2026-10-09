@@ -43,8 +43,8 @@ The core build-and-ship pipeline. `/cycle` chains them end to end.
 | build | Plan → code |
 | review | Code vs. plan (static) |
 | break | Adversarial stress-testing (dynamic) |
-| ship | Check, commit, push to main, then follow the pipeline to a deploy verdict, on every GitLab repo |
-| watch | Pipeline to completion + log triage (standalone; ship now carries the same watcher) |
+| ship | Learn the repo's rules, check, commit, push to main, follow CI to a verdict; GitLab and GitHub repos |
+| watch | Follow a CI run or pipeline to its end, report the verdict, and hand failures to the skill that fixes them (debug, recover, ship, test) |
 | track | Update the progress tracker |
 | recover | Diagnose a failed build before reacting |
 | imprint | Capture UI patterns after building a component |
