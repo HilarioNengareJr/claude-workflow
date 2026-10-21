@@ -45,6 +45,7 @@ The core build-and-ship pipeline. `/cycle` chains them end to end.
 | break | Adversarial stress-testing (dynamic) |
 | ship | Learn the repo's rules, check, commit, push to main, follow CI to a verdict; GitLab and GitHub repos |
 | watch | Follow a CI run or pipeline to its end, report the verdict, and hand failures to the skill that fixes them (debug, recover, ship, test) |
+| worktrees | Every worktree of a repo sorted into live, to continue, ready to land, finished and kept by rule (commits matched by patch, so cherry picked work counts as landed); then safe cleanups and consolidations, one yes at a time |
 | track | Update the progress tracker |
 | recover | Diagnose a failed build before reacting |
 | imprint | Capture UI patterns after building a component |
@@ -119,6 +120,7 @@ graph LR
     imprint -.->|after UI work| build
     transpose -.->|design inspiration into| build
     cycle ==>|chains| refine
+    worktrees -.->|ready to land| ship
   end
 
   subgraph decide [02 Decision support]
