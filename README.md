@@ -92,6 +92,7 @@ Turning work into words for other people.
 | eod | Me/team, end of day |
 | client | Stakeholders, plain English |
 | write | Files in my voice (PDF, CSV, Excel and more), first person, polite, saved to the Desktop |
+| clarify | Me, when a reply was too much: the same answer, short and plain |
 | vault | Obsidian vault notes + CTO-grade system docs (ADRs, tech debt register, roadmap, runbooks with the handover test; tokenized portfolio export on request) |
 
 ### 06 — Session memory
@@ -142,7 +143,7 @@ graph LR
   end
 
   subgraph comms [05 Comms & reporting]
-    standup; eod; client; vault; write
+    standup; eod; client; vault; write; clarify
   end
   standup -->|starts the day| loop
   loop -->|ends the day| eod
