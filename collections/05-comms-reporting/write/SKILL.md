@@ -1,5 +1,5 @@
 ---
-name: write-as-me
+name: write
 description: >-
   Write a document as the user, Hilario Nengare of New Analog, in the user's
   own first person voice, and save it as the file they ask for: PDF, CSV, Excel,
@@ -9,12 +9,12 @@ description: >-
   written for someone: "in pdf can you list", "make a pdf for", "write this up
   for Jason", "put it in a spreadsheet", "export this as csv", "excel of",
   "write it like it's me", "from me to", "a doc I can send", or typing
-  /write-as-me. Distinct from /client (an update email or chat message in the
+  /write. Distinct from /client (an update email or chat message in the
   chat window, no file) and /document (PR, changelog and release prose in the
   repo); this skill makes a file the user sends or keeps.
 ---
 
-# Write as me
+# Write
 
 Write a file that reads as if Hilario wrote it, in the format they ask
 for, and put it where they will see it. Every rule below comes from their own
